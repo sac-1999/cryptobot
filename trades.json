@@ -1,14 +1,11 @@
 {
   "trade": {
-    "tradetime": "2025-07-14 05:15",
-    "entry": 118872.0,
-    "stoploss": 118630.0,
-    "target": 119235.0,
-    "tradetype": "buy",
-    "qty": 5,
-    "openorderid": 703795634,
-    "stoplossorderid": null,
-    "targetorderid": null,
-    "istradeactive": true
+    "tradetime": "2025-07-17 23:54",
+    "entry": 119561.5,
+    "stoploss": 119706.0,
+    "target": 119200.25,
+    "tradetype": "sell",
+    "qty": 3,
+    "openorderid": 721714856
   }
 }
