@@ -1,1 +1,85 @@
 creds*
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Virtual environment
+env/
+venv/
+ENV/
+.venv/
+.env/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Pytest
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Pyre
+.pyre/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Data files
+*.csv
+*.h5
+*.db
+*.sqlite
+*.feather
+*.parquet
+
+# Model artifacts
+*.pkl
+*.joblib
+*.onnx
+*.hdf5
+*.pt
+*.pth
+
+# Environment variables
+.env
+.env.*
+
+# Ignore backup files
+*~
+*.bak
+
+# Ignore compiled notebooks
+*.nbconvert.ipynb

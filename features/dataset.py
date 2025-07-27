@@ -1,4 +1,4 @@
-import freq_rets, fwd_return
+import freq_rets, fwd_return, comp_indicator
 import pandas as pd
 from datetime import timedelta, datetime
 import pytz
@@ -6,7 +6,7 @@ import cacher
 
 ASIA_TZ = 'Asia/Kolkata'
 
-@cacher.load_or_save_pickle(subdir='train_data_v3',  verbose=1)
+@cacher.load_or_save_pickle(subdir='train_data_with_ind',  verbose=1)
 def train_data(symbol, date, freq, num_features):
     base_date = pd.to_datetime(date).tz_localize(ASIA_TZ)
     all_rows = []
@@ -19,6 +19,8 @@ def train_data(symbol, date, freq, num_features):
     for dt in time_range:
         try:
             row = freq_rets.compute(symbol, dt, freq, num_features)
+            row_1 = comp_indicator.compute(symbol, dt, freq)
+            row = row.merge(row_1, on = ['timestamp'])
             label_row = fwd_return.fwd_return(symbol, dt, freq)
             if row is not None and not row.empty:
                 all_rows.append(row)
@@ -31,5 +33,5 @@ def train_data(symbol, date, freq, num_features):
     return feature_df.merge(label_df, on='timestamp', how='inner')
 
 # Example
-# print(train_data('BTCUSD', datetime(2024, 2, 4), freq='1h', num_features=20))
+# print(train_data('BTCUSD', datetime(2024, 2, 10, 15, 30), freq='30min', num_features=20))
 
