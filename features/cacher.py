@@ -49,12 +49,11 @@ def load_or_save_pickle(subdir=None, check_valid=lambda x: True, verbose=0):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            try:
-                # Create a hashable key
-                func_key = f"{func.__module__}.{func.__name__}"
-                arg_key = f"{args}:{kwargs}"
-                arg_hash = hashlib.md5(arg_key.encode()).hexdigest()
+            func_key = f"{func.__module__}.{func.__name__}"
+            arg_key = f"{args}:{kwargs}"
+            arg_hash = hashlib.md5(arg_key.encode()).hexdigest()
 
+            try:
                 if file_cache.contains(func_key, arg_hash):
                     file_path = file_cache.get_file_path(func_key, arg_hash)
                     result = file_cache.get(func_key, arg_hash)
@@ -65,14 +64,22 @@ def load_or_save_pickle(subdir=None, check_valid=lambda x: True, verbose=0):
                     elif verbose:
                         print(f"[CACHE INVALID] {file_path} → rerunning function...")
 
-                # Run the actual function
-                result = func(*args, **kwargs)
+                # First attempt
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as e:
+                    print(f"[RETRY] Function {func_key} failed on first attempt: {e}")
+                    traceback.print_exc()
+                    # Retry once
+                    result = func(*args, **kwargs)
+
                 file_cache.set(func_key, arg_hash, result)
                 if verbose:
                     print(f"[CACHE WRITE] {func_key}{arg_key}")
                 return result
 
-            except Exception:
+            except Exception as e:
+                print(f"[FAILED] Function {func_key} failed after retry: {e}")
                 traceback.print_exc()
                 sys.exit(1)
 

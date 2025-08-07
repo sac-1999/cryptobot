@@ -28,6 +28,7 @@ def load_historical_data(date_tm, symbol, freq = '1m'):
     if response.status_code == 200:
         data = response.json()
         df = pd.DataFrame(data['result'])
+        print(df.columns)
         df['time'] = pd.to_datetime(df['time'], unit='s',  utc=True).dt.tz_convert(pytz.timezone('Asia/Kolkata'))
         df = df[::-1]
         if df.isna().any().any():
@@ -36,7 +37,7 @@ def load_historical_data(date_tm, symbol, freq = '1m'):
     else:
         raise ConnectionError(f"Failed to fetch data: {response.status_code} - {response.text}")
     
-@cacher.load_or_save_pickle(subdir='minute_data',  )
+# @cacher.load_or_save_pickle(subdir='minute_data',  )
 def get(symbol, date_tm):
     # When calling this function give lag on your own of minimim 1min, and I pass date_tm in Asia/kolkata time.
     from datetime import datetime
@@ -86,7 +87,7 @@ def fix_timezone(dt, tz_str='Asia/Kolkata'):
         return dt.astimezone(tz)
 
 
-@cacher.load_or_save_pickle(subdir='data',  )
+# @cacher.load_or_save_pickle(subdir='data',  )
 def compute(symbol, date_tm, freq):
     date_tm = fix_timezone(date_tm)
     #Data not lagged
@@ -95,7 +96,7 @@ def compute(symbol, date_tm, freq):
     # df.rename(columns={'time': 'timestamp'}, inplace=True)
     df['timestamp'] = pd.to_datetime(df['timestamp'])  # Ensures tz-aware
     df.set_index('timestamp', inplace=True)
-    print(df)
+    # print(df)
     # Resample safely
     df_resampled = df.resample(freq).agg({
         'open': 'first',
@@ -106,4 +107,4 @@ def compute(symbol, date_tm, freq):
     }).dropna().reset_index()
 
     return df_resampled
-# print(compute('BTCUSD', datetime(2025, 7, 26, 19, 30, 59), '10min'))
+print(compute('BTCUSD', datetime(2024, 2, 29, 19, 30, 59), '10min'))
