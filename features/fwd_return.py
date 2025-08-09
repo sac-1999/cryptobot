@@ -1,69 +1,80 @@
-import dataloader
 import pandas as pd
-from datetime import datetime
 import pytz
+from datetime import datetime, timedelta
 import cacher
+import dataloader
 
-@cacher.load_or_save_pickle(subdir='fwd_ret',  )
-def fwd_return(symbol, date_tm, freq, verbose=1):
+
+@cacher.persistent_cache(subdir='fwd_ret')
+def compute(symbol: str, date_tm: datetime, freq: str, verbose: int = 1) -> pd.DataFrame:
+    """
+    Calculate forward return for a symbol from `date_tm` to `date_tm + interval`.
+
+    Args:
+        symbol (str): Trading pair (e.g., 'BTCUSDT')
+        date_tm (datetime | str): Start time
+        freq (str): Interval (e.g., '15min', '1h', '1d')
+        verbose (int): Verbosity
+    """
     tz = pytz.timezone('Asia/Kolkata')
 
-    # Ensure input datetime is timezone-aware
+    # Ensure datetime is timezone-aware
     date_tm = pd.to_datetime(date_tm)
     if date_tm.tzinfo is None or date_tm.tzinfo.utcoffset(date_tm) is None:
         date_tm = date_tm.tz_localize(tz)
     else:
         date_tm = date_tm.tz_convert(tz)
 
-    if date_tm >= datetime.now(tz):
-        raise Exception(
-            f'Forward bias in live data! Time right now is {datetime.now(tz)} '
-            f'but trying to fetch data for {date_tm}'
-        )
-
     if verbose:
-        print(f"📥 Requested time: {date_tm}, frequency: {freq}")
+        print(f"📅 Requested time: {date_tm}, frequency: {freq}")
 
-    lag = pd.to_timedelta(freq)
-    fetch_date_tm = date_tm + lag
+    # --- Snapshot at date_tm ---
+    snapshot_start = dataloader.get_symbol_snapshot_bar(
+        symbol=symbol,
+        date_tm=date_tm,
+        interval=freq,
+        local_timezone='Asia/Kolkata',
+    )
 
-    if verbose:
-        print(f"📅 Fetching data from: {fetch_date_tm}")
+    if snapshot_start.empty:
+        if verbose:
+            print(f"⚠️ No data available for start snapshot.")
+        return pd.DataFrame(columns=['timestamp', 'Fwd_Ret'])
 
-    df = dataloader.get(symbol, fetch_date_tm)
-
-    if verbose:
-        print(f"📊 Raw data from dataloader:\n{df}")
-
-    df = df.sort_values("timestamp").reset_index(drop=True)
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    if df["timestamp"].dt.tz is None:
-        df["timestamp"] = df["timestamp"].dt.tz_localize(tz)
+    # --- Determine forward time ---
+    if "min" in freq:
+        delta = timedelta(minutes=int(freq.replace("min", "")))
+    elif "h" in freq:
+        delta = timedelta(hours=int(freq.replace("h", "")))
+    elif "d" in freq:
+        delta = timedelta(days=int(freq.replace("d", "")))
     else:
-        df["timestamp"] = df["timestamp"].dt.tz_convert(tz)
+        raise ValueError(f"Unsupported frequency format: {freq}")
 
-    # orgdf = df.copy()
-    df = df[df['timestamp'] >= date_tm]
-    if df.empty:
-        return pd.DataFrame(columns= ['timestamp', 'Fwd_Ret'])
-    # try:
-    #     (df["close"].iloc[-1] - df['close'].iloc[0])/df['close'].iloc[0]
-    # except Exception as e:
-    #     print("filtetered df : ",df)
-    #     print(date_tm)
-    #     print("orgdf :" , orgdf)
-    #     print(str(e))
+    fwd_time = date_tm + delta
 
-    df["Fwd_Ret"] = (df["close"].iloc[-1] - df['close'].iloc[0])/df['close'].iloc[0]
+    # --- Snapshot at forward time ---
+    snapshot_fwd = dataloader.get_symbol_snapshot_bar(
+        symbol=symbol,
+        date_tm=fwd_time,
+        interval=freq,
+        local_timezone='Asia/Kolkata',
+    )
 
-    if df.empty:
-        raise Exception(f"No data available after filtering for timestamp >= {date_tm}")
+    if snapshot_fwd.empty:
+        if verbose:
+            print(f"⚠️ No data available for forward snapshot.")
+        return pd.DataFrame(columns=['timestamp', 'Fwd_Ret'])
 
-    return df.head(1)[["timestamp", "Fwd_Ret"]]
+    # --- Calculate forward return ---
+    price_start = snapshot_start['close'].iloc[0]
+    price_fwd = snapshot_fwd['close'].iloc[0]
+    fwd_ret = (price_fwd - price_start) / price_start
 
-# # Example usage
-# if __name__ == "__main__":
-#     # print(fwd_return('BTCUSD', datetime(2025, 7, 26, 19, 10), '5min'))
-#     # print(fwd_return('BTCUSD', datetime(2025, 7, 26, 19, 20), '10min'))
-#     print(fwd_return('BTCUSD', datetime(2025, 7, 26, 19, 50), '10min'))
+    if verbose:
+        print(f"📈 Forward return: {fwd_ret:.5f}")
+
+    return pd.DataFrame([{
+        'timestamp': snapshot_start['timestamp'].iloc[0],
+        'Fwd_Ret': fwd_ret
+    }])

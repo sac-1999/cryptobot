@@ -1,110 +1,199 @@
-import requests
-import time
-from datetime import datetime, timedelta
 import pandas as pd
+import requests
+from datetime import datetime, timedelta
 import pytz
-import cacher
-import json
+from cacher import persistent_cache
 
 
-def get_unix_timestamp(dt):
-    return int(time.mktime(dt.timetuple()))
+def get_binance_klines(symbol: str, interval: str, start_time: datetime, end_time: datetime, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
+    """
+    Fetch 1-minute kline data from Binance between start_time and end_time (both datetime objects).
+    All times should be timezone-aware UTC.
+    """
+    # Convert start and end times to UTC timestamps in milliseconds
+    start_time = start_time.astimezone(pytz.UTC)
+    end_time = end_time.astimezone(pytz.UTC)
+    start_ms = int(start_time.timestamp() * 1000)
+    end_ms = int(end_time.timestamp() * 1000)
 
-def load_historical_data(date_tm, symbol, freq = '1m'):
-    date_tm = pd.to_datetime(date_tm)
-    start_unix = get_unix_timestamp(date_tm- timedelta(1)) 
-    end_unix = get_unix_timestamp(date_tm)
-
-    url = 'https://api.india.delta.exchange/v2/history/candles'
+    url = "https://api.binance.com/api/v3/klines"
     params = {
-        'resolution': freq,
-        'symbol': symbol,
-        'start': start_unix,
-        'end': end_unix
+        "symbol": symbol,
+        "interval": interval,
+        "startTime": start_ms,
+        "endTime": end_ms,
+        "limit": 1000,
     }
-    headers = {'Accept': 'application/json'}
-    response = requests.get(url, params=params, headers=headers)
 
-    if response.status_code == 200:
-        data = response.json()
-        df = pd.DataFrame(data['result'])
-        print(df.columns)
-        df['time'] = pd.to_datetime(df['time'], unit='s',  utc=True).dt.tz_convert(pytz.timezone('Asia/Kolkata'))
-        df = df[::-1]
-        if df.isna().any().any():
-            raise(f"DataFrame contains nan's Please check... \n {df}")
-        return df
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        raise Exception(f"Failed to fetch data for {symbol}: {response.text}")
+
+    data = response.json()
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data, columns=[
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_asset_volume", "num_trades",
+        "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
+    ])
+
+    df = df.astype({
+        "open": float,
+        "high": float,
+        "low": float,
+        "close": float,
+        "volume": float,
+        "quote_asset_volume": float,
+        "num_trades": int,
+        "taker_buy_base_volume": float,
+        "taker_buy_quote_volume": float,
+    })
+
+    # Convert open/close time to local timezone
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(local_timezone)
+    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True).dt.tz_convert(local_timezone)
+
+    return df
+
+
+def build_manual_candle(df: pd.DataFrame) -> dict:
+    """
+    Manually build OHLCV candle from 1-minute data.
+    """
+    return {
+        "open_time": df["open_time"].min(),
+        "close_time": df["close_time"].max(),
+        "open": df["open"].iloc[0],
+        "high": df["high"].max(),
+        "low": df["low"].min(),
+        "close": df["close"].iloc[-1],
+        "volume": df["volume"].sum(),
+        "quote_asset_volume": df["quote_asset_volume"].sum(),
+        "num_trades": df["num_trades"].sum(),
+        "taker_buy_base_volume": df["taker_buy_base_volume"].sum(),
+        "taker_buy_quote_volume": df["taker_buy_quote_volume"].sum(),
+    }
+
+@persistent_cache(subdir="snapshot_bars", non_empty=False)
+def get_symbol_snapshot_bar(symbol: str, date_tm: datetime, interval: str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
+    """
+    For a given symbol and datetime, get the snapshot candle for the preceding interval.
+    Example: If interval is '15min' and datetime is 15:30, we get candle from 15:15 to 15:30.
+    """
+    if not isinstance(date_tm, datetime):
+        raise TypeError("`date_tm` must be a datetime object.")
+
+    tz = pytz.timezone(local_timezone)
+    if date_tm.tzinfo is None:
+        local_dt = tz.localize(date_tm)
     else:
-        raise ConnectionError(f"Failed to fetch data: {response.status_code} - {response.text}")
-    
-# @cacher.load_or_save_pickle(subdir='minute_data',  )
-def get(symbol, date_tm):
-    # When calling this function give lag on your own of minimim 1min, and I pass date_tm in Asia/kolkata time.
-    from datetime import datetime
-    import pytz
+        local_dt = date_tm.astimezone(tz)
 
-    now = datetime.now(pytz.timezone('Asia/Kolkata'))
-    input_time = pd.to_datetime(date_tm)
-
-    if input_time >= now:
+    now = datetime.now(tz)
+    if local_dt + pd.to_timedelta('1m')>= now:
         raise ValueError(
             f"[Forward Bias Detected] ❌ Attempted to fetch data for future timestamp.\n"
             f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Requested time: {input_time.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"Requested time: {local_dt.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Wait for 1min bar to complete maybe!!"
         )
-    data = load_historical_data(date_tm, symbol, freq = '1m')
-    data.rename(columns={'time': 'timestamp'}, inplace=True)
-    return data
 
-from datetime import datetime
-import pandas as pd
-import pytz
+    try:
+        interval_td = pd.to_timedelta(interval)
+    except Exception:
+        raise ValueError(f"Invalid interval format: {interval}. Try formats like '15min', '1H' etc.")
 
-def fix_timezone(dt, tz_str='Asia/Kolkata'):
+    n_bars = int(interval_td / pd.Timedelta(minutes=1))
+    start_dt = local_dt - interval_td
+
+    df = get_binance_klines(
+        symbol=symbol,
+        interval="1m",
+        start_time=start_dt - timedelta(minutes=5),
+        end_time=local_dt,
+        local_timezone=local_timezone
+    )
+
+    if df.empty:
+        raise ValueError(f"No 1-minute data returned for {symbol} between {start_dt} and {local_dt}.")
+
+    df = df[df["open_time"] < local_dt].tail(n_bars)
+
+    if len(df) < n_bars:
+        raise ValueError(
+            f"Not enough 1-minute bars to build a {interval} candle for {symbol} ending at {local_dt}.\n"
+            f"Expected {n_bars}, got {len(df)}.\n"
+            f"Possibly the latest candle is still forming — try again after the interval completes."
+        )
+
+    candle = build_manual_candle(df)
+    candle["symbol"] = symbol
+    df = pd.DataFrame([candle])
+    df['timestamp'] = pd.to_datetime(local_dt)
+    return df
+
+def get_last_n_snapshot_bars(symbol: str, end_time: datetime, interval: str, n_bars: int, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
     """
-    Ensures that the input datetime is timezone-aware.
-    If it is naive, it is localized to the specified timezone.
-    If it is already aware, it is converted to the target timezone.
+    Get the last `n_bars` snapshot candles for the given symbol ending at `end_time`.
 
-    Args:
-        dt (datetime or str): Input datetime (can be naive or aware, or a string)
-        tz_str (str): Timezone string (e.g., 'Asia/Kolkata')
+    Parameters
+    ----------
+    symbol : str
+        Trading pair symbol, e.g. "BTCUSDT".
+    end_time : datetime
+        The last timestamp to include (inclusive). Should be in local time or timezone-aware.
+    interval : str
+        Candle interval, e.g. '15min', '1H', etc.
+    n_bars : int
+        Number of snapshot bars to fetch.
+    local_timezone : str, optional
+        Timezone to localize/convert timestamps to.
 
-    Returns:
-        datetime: Timezone-aware datetime in the specified timezone
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the last `n_bars` snapshot candles ending at `end_time`.
     """
-    # Convert string input to datetime
-    if isinstance(dt, str):
-        dt = pd.to_datetime(dt)
-
-    tz = pytz.timezone(tz_str)
-
-    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-        # Naive datetime — localize
-        return tz.localize(dt)
+    tz = pytz.timezone(local_timezone)
+    if end_time.tzinfo is None:
+        end_time = tz.localize(end_time)
     else:
-        # Aware datetime — convert to target timezone
-        return dt.astimezone(tz)
+        end_time = end_time.astimezone(tz)
 
+    all_bars = []
+    current_time = end_time
 
-# @cacher.load_or_save_pickle(subdir='data',  )
-def compute(symbol, date_tm, freq):
-    date_tm = fix_timezone(date_tm)
-    #Data not lagged
-    df = get(symbol, date_tm)
-    # Rename and set index
-    # df.rename(columns={'time': 'timestamp'}, inplace=True)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])  # Ensures tz-aware
-    df.set_index('timestamp', inplace=True)
-    # print(df)
-    # Resample safely
-    df_resampled = df.resample(freq).agg({
-        'open': 'first',
-        'high': 'max',
-        'low': 'min',
-        'close': 'last',
-        'volume': 'sum'
-    }).dropna().reset_index()
+    for _ in range(n_bars):
+        df_bar = get_symbol_snapshot_bar(
+            symbol=symbol,
+            date_tm=current_time,
+            interval=interval,
+            local_timezone=local_timezone
+        )
+        all_bars.append(df_bar)
+        current_time -= pd.to_timedelta(interval)  # Step back one interval
 
-    return df_resampled
-print(compute('BTCUSD', datetime(2024, 2, 29, 19, 30, 59), '10min'))
+    result_df = pd.concat(all_bars, ignore_index=True)
+    result_df = result_df.sort_values("timestamp").reset_index(drop=True)
+    return result_df
+
+# @persistent_cache(subdir="snapshot_bars_all", non_empty=True)
+# def get_snapshot_bars(symbols: tuple, date_tm: datetime, interval: str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
+#     """
+#     Get snapshot candles for multiple symbols at once.
+#     """
+#     all_dfs = []
+
+#     for symbol in symbols:
+#         try:
+#             df = get_symbol_snapshot_bar(symbol, date_tm, interval, local_timezone)
+#             all_dfs.append(df)
+#         except Exception as e:
+#             print(f"Error for {symbol}: {e}")
+
+#     if not all_dfs:
+#         return pd.DataFrame()
+
+#     return pd.concat(all_dfs, ignore_index=True)
