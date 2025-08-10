@@ -1,12 +1,74 @@
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
-import sma  # assuming your sma module is importable
+import sma, freq_rets, comp_indicator  # assuming your sma module is importable
 from cacher import persistent_cache
 import dataloader
 import fwd_return
 
-@persistent_cache(subdir="train_data", non_empty=True)
+def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_features=30):
+    """
+    Collects SMA, return-based, and technical indicator features for a single snapshot time.
+    
+    Parameters
+    ----------
+    symbol : str
+        Trading symbol, e.g. 'BTCUSDT'
+    end_time : datetime
+        The time at which to take the snapshot (timezone-aware or naive in local_timezone)
+    interval : str
+        Interval string (e.g. '1h', '15min')
+    local_timezone : str
+        Timezone string
+    num_return_features : int
+        Number of past returns to compute as features
+
+    Returns
+    -------
+    pd.DataFrame
+        Single-row DataFrame with merged features
+    """
+    # 1. SMA features
+    sma_df = sma.get_sma_indicators(
+        symbol=symbol,
+        end_time=end_time,
+        interval=interval,
+        local_timezone=local_timezone
+    )
+
+    if sma_df is None or sma_df.empty:
+        return pd.DataFrame()
+
+    # Ensure timestamp column is datetime
+    sma_df['timestamp'] = pd.to_datetime(sma_df['timestamp'])
+
+    # 2. Return-based features
+    ret_df = freq_rets.compute(
+        symbol=symbol,
+        date_tm=end_time,
+        freq=interval,
+        num_features=num_return_features,
+        local_timezone=local_timezone
+    )
+
+    # 3. Technical indicators
+    tech_df = comp_indicator.compute(
+        symbol=symbol,
+        date_tm=end_time,
+        freq=interval,
+        local_timezone=local_timezone
+    )
+
+    # Merge all features on timestamp
+    merged = sma_df
+    if ret_df is not None and not ret_df.empty:
+        merged = merged.merge(ret_df, on="timestamp", how="left")
+    if tech_df is not None and not tech_df.empty:
+        merged = merged.merge(tech_df, on="timestamp", how="left")
+
+    return merged
+
+@persistent_cache(subdir="train_data_v1", non_empty=True)
 def train_data(symbol: str, date: datetime, interval: str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
     """
     Collects SMA indicator snapshots spaced by `interval` throughout a given date.
@@ -50,12 +112,7 @@ def train_data(symbol: str, date: datetime, interval: str, local_timezone: str =
     # Collect data
     dfs = []
     for end_time in times:
-        df = sma.get_sma_indicators(
-            symbol=symbol,
-            end_time=end_time,
-            interval=interval,
-            local_timezone=local_timezone
-        )
+        df = _single_timestamp(symbol, end_time, interval, local_timezone)
         dfs.append(df)
 
     # Combine into single DataFrame
@@ -113,4 +170,5 @@ def create_multi_day_dataset(symbol: str, dates: list, interval: str, local_time
         return pd.concat(all_data, ignore_index=True)
     else:
         return pd.DataFrame()
-    
+
+# print(train_data('BTCUSDT', datetime(2025, 3, 1, 15, 30), '30min', "Asia/Kolkata"))
