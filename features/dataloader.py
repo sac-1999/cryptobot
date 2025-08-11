@@ -179,21 +179,5 @@ def get_last_n_snapshot_bars(symbol: str, end_time: datetime, interval: str, n_b
     result_df = result_df.sort_values("timestamp").reset_index(drop=True)
     return result_df
 
-# @persistent_cache(subdir="snapshot_bars_all", non_empty=True)
-# def get_snapshot_bars(symbols: tuple, date_tm: datetime, interval: str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
-#     """
-#     Get snapshot candles for multiple symbols at once.
-#     """
-#     all_dfs = []
 
-#     for symbol in symbols:
-#         try:
-#             df = get_symbol_snapshot_bar(symbol, date_tm, interval, local_timezone)
-#             all_dfs.append(df)
-#         except Exception as e:
-#             print(f"Error for {symbol}: {e}")
-
-#     if not all_dfs:
-#         return pd.DataFrame()
-
-#     return pd.concat(all_dfs, ignore_index=True)
+# print(get_last_n_snapshot_bars('BTCUSDT', datetime(2025, 8, 10, 21, 00), interval= '15min', n_bars= 1)[['close']])

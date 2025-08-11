@@ -9,7 +9,7 @@ import io
 import pandas as pd  # Used for DataFrame empty check
 
 # Base cache path — change if needed
-CACHEPATH = '/home/debjitparia/Cache/cryptobot'
+CACHEPATH = '/home/debjitparia/Cache/cryptobot_fut'
 
 
 def _hash_args(func_key, args, kwargs):
