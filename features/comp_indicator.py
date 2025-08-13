@@ -5,52 +5,45 @@ import cacher
 from indicators import Indicators
 import dataloader
 
-
 def multiday_data(symbol, enddate, freq, local_timezone="Asia/Kolkata"):
     """
     Get at least 252 candles ending at enddate for a given symbol & frequency.
+    Returns sorted dataframe by timestamp.
     """
     totalcandles = 0
     dflist = []
 
-    # Ensure datetime
     enddate = pd.to_datetime(enddate)
 
     while totalcandles < 252:
-        # Fetch as many bars as available up to enddate
         df = dataloader.get_last_n_snapshot_bars(
             symbol=symbol,
             end_time=enddate,
             interval=freq,
-            n_bars=252,  # fetch in chunks, no limit
+            n_bars=252,
             local_timezone=local_timezone
         )
 
         if df is not None and not df.empty:
-            # Ensure sorted by timestamp ascending
             df = df.sort_values("timestamp").reset_index(drop=True)
             dflist.insert(0, df)
             totalcandles += len(df)
 
-        # Go back one day
         enddate -= timedelta(days=1)
 
-        # Safety stop
         if enddate.year <= 2020:
             break
 
     if not dflist:
         return None
 
-    return pd.concat(dflist).drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return pd.concat(dflist).drop_duplicates(
+        subset=["timestamp"]
+    ).sort_values("timestamp").reset_index(drop=True)
 
 
-@cacher.persistent_cache(subdir="comp_indicator", non_empty=True)
+@cacher.persistent_cache(subdir="Comp_indicator_big", non_empty=True)
 def compute(symbol, date_tm, freq, local_timezone="Asia/Kolkata"):
-    """
-    Compute technical indicators snapshot for a given symbol and datetime.
-    """
-    # Just before the snapshot
     fetch_date_tm = pd.to_datetime(date_tm) - timedelta(seconds=30)
 
     df = multiday_data(symbol, fetch_date_tm, freq, local_timezone=local_timezone)
@@ -59,39 +52,81 @@ def compute(symbol, date_tm, freq, local_timezone="Asia/Kolkata"):
 
     df.reset_index(drop=True, inplace=True)
 
-    # Technical indicators
-    ema_list = [7, 14, 21, 44, 50, 63, 100, 132, 200, 256]
-    for ema in ema_list:
-        df = Indicators.ema(df, ema)
+    lengths = [14, 21, 30, 60, 100, 150, 200]
 
-    for length, multi in [(10, 3), (15, 1), (10, 2), (8, 2), (8, 3)]:
-        df = Indicators.supertrend(df, length, multi)
+    # EMA
+    for length in lengths:
+        df = Indicators.ema(df, col="close", length=length)
 
+    # ADX
+    for length in lengths:
+        df = Indicators.adx(df, length=length)
+
+    # EOM
+    for length in lengths:
+        df = Indicators.eom(df, length=length)
+
+    # ADL
+    for length in lengths:
+        df = Indicators.adl(df, length=length)
+
+    # CCI
+    for length in lengths:
+        df = Indicators.cci(df, length=length)
+
+    # ATR bands
+    for length in lengths:
+        df = Indicators.atr_bands(df, length=length)
+
+    # Chaikin Oscillator
+    for length in lengths:
+        short_len = max(2, length // 5)
+        long_len = max(short_len + 1, length // 2)
+        df = Indicators.chaikin_oscillator(df, short_length=short_len, long_length=long_len)
+
+    # MFI
+    for length in lengths:
+        df = Indicators.mfi(df, length=length)
+
+    # OBV
+    for length in lengths:
+        df = Indicators.obv(df, length=length)
+
+    # EFI
+    for length in lengths:
+        df = Indicators.efi(df, length=length)
+
+    # Bollinger Bands
+    for length in lengths:
+        df = Indicators.bbands(df, length=length, num_std=2)
+
+    # MACD
+    df = Indicators.macd(df, fast=12, slow=26)
+    for length in lengths:
+        fast_len = max(5, length // 2)
+        slow_len = max(fast_len + 1, length)
+        df = Indicators.macd(df, fast=fast_len, slow=slow_len)
+
+    # Supertrend
+    for length in lengths:
+        df = Indicators.supertrend(df, length, multiplier=2)
+
+    # VWAP
     df = Indicators.vwap(df)
-    df = Indicators.rsi(df, 14)
-    df = Indicators.macd(df)
+
+    # RSI
+    for length in lengths:
+        df = Indicators.rsi(df, length=length)
 
     # Drop incomplete rows
-    df = df.dropna()
-    print(df.columns)
-    # Normalize indicator columns relative to close, except main OHLCV + RSI
-    maincolumns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-    for col in ['ema_7', 'ema_14',
-       'ema_21', 'ema_44', 'ema_50', 'ema_63', 'ema_100', 'ema_132', 'ema_200',
-       'ema_256', 'supertrend_10_3', 'supertrend_15_1', 'supertrend_10_2',
-       'supertrend_8_2', 'supertrend_8_3', 'vwap', 'rsi_14', 'macd']:
-        if col in maincolumns or 'rsi' in col or 'time' in col:
-            continue
-        df[col] = (df[col] - df['close']) / df['close']
+    df.dropna(inplace=True)
 
-    # Keep only the last row (snapshot)
-    snapshot = df.tail(1).copy()
-    snapshot.reset_index(drop=True, inplace=True)
+    # Prepare snapshot
+    snapshot = df.tail(1).copy().reset_index(drop=True)
     snapshot['timestamp'] = pd.to_datetime(date_tm)
 
-    return snapshot[['timestamp','ema_7', 'ema_14',
-       'ema_21', 'ema_44', 'ema_50', 'ema_63', 'ema_100', 'ema_132', 'ema_200',
-       'ema_256', 'supertrend_10_3', 'supertrend_15_1', 'supertrend_10_2',
-       'supertrend_8_2', 'supertrend_8_3', 'vwap', 'rsi_14', 'macd']]
+    # Collect feature columns
+    main_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'open_time', 'close_time', 'quote_asset_volume' , 'num_trades', 'taker_buy_base_volume' 'taker_buy_quote_volume', 'symbol', 'taker_buy_base_volume',  'taker_buy_quote_volume']
+    feature_cols = [col for col in snapshot.columns if col not in main_columns]
 
-# print(compute('BTCUSDT', datetime(2025, 4, 23, 15, 30), '30min', local_timezone="Asia/Kolkata"))
+    return snapshot[['timestamp', 'symbol'] + feature_cols]
