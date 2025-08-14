@@ -50,12 +50,7 @@ def get_training_dates(
     current = start_date
 
     while current <= end_date:
-        if frequency == 'daily':
-            training_dates.append(current)
-        elif frequency == 'weekly' and current.weekday() == 0:  # Monday
-            training_dates.append(current)
-        elif frequency == 'monthly' and current.day == 1:
-            training_dates.append(current)
+        training_dates.append(current)
         current += timedelta(days=1)
 
     return training_dates
