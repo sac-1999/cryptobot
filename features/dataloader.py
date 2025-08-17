@@ -178,6 +178,3 @@ def get_last_n_snapshot_bars(symbol: str, end_time: datetime, interval: str, n_b
     result_df = pd.concat(all_bars, ignore_index=True)
     result_df = result_df.sort_values("timestamp").reset_index(drop=True)
     return result_df
-
-
-# print(get_last_n_snapshot_bars('BTCUSDT', datetime(2025, 8, 10, 21, 00), interval= '15min', n_bars= 1)[['close']])

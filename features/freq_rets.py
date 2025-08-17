@@ -51,5 +51,3 @@ def compute(symbol, date_tm, freq, num_features, local_timezone="Asia/Kolkata"):
     ret_df['timestamp'] = pd.to_datetime(date_tm)
 
     return ret_df
-
-print(compute('BTCUSDT', datetime(2025, 4, 23, 15, 30), '30min', 30, local_timezone="Asia/Kolkata"))

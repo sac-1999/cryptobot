@@ -6,7 +6,7 @@ from cacher import persistent_cache
 import dataloader
 import fwd_return
 
-def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_features=30):
+def _single_timestamp(symbol, end_time, port_freq, local_timezone, num_return_features=30):
     """
     Collects SMA, return-based, and technical indicator features for a single snapshot time.
     
@@ -16,7 +16,7 @@ def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_fea
         Trading symbol, e.g. 'BTCUSDT'
     end_time : datetime
         The time at which to take the snapshot (timezone-aware or naive in local_timezone)
-    interval : str
+    port_freq : str
         Interval string (e.g. '1h', '15min')
     local_timezone : str
         Timezone string
@@ -32,7 +32,7 @@ def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_fea
     sma_df = sma.get_sma_indicators(
         symbol=symbol,
         end_time=end_time,
-        interval=interval,
+        interval=port_freq,
         local_timezone=local_timezone
     )
 
@@ -46,7 +46,7 @@ def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_fea
     ret_df = freq_rets.compute(
         symbol=symbol,
         date_tm=end_time,
-        freq=interval,
+        freq=port_freq,
         num_features=num_return_features,
         local_timezone=local_timezone
     )
@@ -55,7 +55,7 @@ def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_fea
     tech_df = comp_indicator.compute(
         symbol=symbol,
         date_tm=end_time,
-        freq=interval,
+        freq=port_freq,
         local_timezone=local_timezone
     )
 
@@ -68,15 +68,15 @@ def _single_timestamp(symbol, end_time, interval, local_timezone, num_return_fea
 
     return merged
 
-@persistent_cache(subdir="train_data_big", non_empty=True)
-def train_data(symbol: str, date: datetime, interval: str, feature_interval:str, fwd_pred_int: str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
+@persistent_cache(subdir="train_data", non_empty=True)
+def train_data(symbol: str, date: datetime, port_freq: str, feature_interval:str, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
     """
-    Collects SMA indicator snapshots spaced by `interval` throughout a given date.
+    Collects SMA indicator snapshots spaced by `port_freq` throughout a given date.
     
     Args:
         symbol (str): Trading symbol (e.g. "BTCUSDT")
         date (datetime): The date for which to collect data (date part used, time ignored).
-        interval (str): Interval string understood by get_sma_indicators (e.g. "1h", "15m").
+        port_freq (str): Interval string understood by get_sma_indicators (e.g. "1h", "15m").
         local_timezone (str): Local timezone string.
 
     Returns:
@@ -88,19 +88,19 @@ def train_data(symbol: str, date: datetime, interval: str, feature_interval:str,
     day_start = tz.localize(datetime(date.year, date.month, date.day, 0, 0))
     day_end = day_start + timedelta(days=1)
 
-    # Convert interval to timedelta
-    # Convert interval to timedelta
-    if interval.endswith("min"):
-        value = int(interval.replace("min", ""))
+    # Convert port_freq to timedelta
+    # Convert port_freq to timedelta
+    if port_freq.endswith("min"):
+        value = int(port_freq.replace("min", ""))
         delta = timedelta(minutes=value)
-    elif interval.endswith("h"):
-        value = int(interval.replace("h", ""))
+    elif port_freq.endswith("h"):
+        value = int(port_freq.replace("h", ""))
         delta = timedelta(hours=value)
-    elif interval.endswith("d"):
-        value = int(interval.replace("d", ""))
+    elif port_freq.endswith("d"):
+        value = int(port_freq.replace("d", ""))
         delta = timedelta(days=value)
     else:
-        raise ValueError(f"Unsupported interval format: {interval}")
+        raise ValueError(f"Unsupported port_freq format: {port_freq}")
 
     # Generate all end_time points in the day
     times = []
@@ -117,18 +117,5 @@ def train_data(symbol: str, date: datetime, interval: str, feature_interval:str,
 
     # Combine into single DataFrame
     result = pd.concat(dfs, ignore_index=True)
-    
-    fwd_dfs = []
-    for ts in result["timestamp"]:
-        fwd_df = fwd_return.compute(symbol=symbol, date_tm=ts, freq=fwd_pred_int, verbose=0)
-        if not fwd_df.empty:
-            fwd_dfs.append(fwd_df)
-
-    if fwd_dfs:
-        fwd_all = pd.concat(fwd_dfs, ignore_index=True)
-        # Merge on timestamp
-        result = result.merge(fwd_all, on="timestamp", how="left")
-    else:
-        result["Fwd_Ret"] = None
 
     return result
