@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytz
 from cacher import persistent_cache
 
-
+# @persistent_cache(subdir="api_call", non_empty=False)
 def get_binance_klines(symbol: str, interval: str, start_time: datetime, end_time: datetime, local_timezone: str = "Asia/Kolkata") -> pd.DataFrame:
     """
     Fetch 1-minute kline data from Binance between start_time and end_time (both datetime objects).
